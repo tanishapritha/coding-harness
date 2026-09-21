@@ -10,9 +10,9 @@ DANGEROUS_PATTERNS = [
     r"curl\s+[^|]+\|\s*(bash|sh)",
     r"wget\s+[^|]+\|\s*(bash|sh)",
     r"chmod\s+777",
-    r"\.ssh/",
-    r"\.env(?:\s|$)",
 ]
+
+PROTECTED_PATHS = {".env", ".env.local", ".env.production"}
 
 
 @dataclass
@@ -23,13 +23,16 @@ class PolicyDecision:
 
 class PolicyEngine:
     def check(self, tool: str, arguments: dict) -> PolicyDecision:
+        if tool in {"read_file", "write_file"}:
+            path = str(arguments.get("path", "")).replace("\\", "/")
+            normalized = path.lstrip("./")
+            if path.startswith("/") or ".." in normalized.split("/"):
+                return PolicyDecision(False, "path must stay inside workspace")
+            if normalized in PROTECTED_PATHS or normalized.startswith(".ssh/"):
+                return PolicyDecision(False, "protected credential path")
         if tool == "run_command":
             command = str(arguments.get("command", ""))
             for pattern in DANGEROUS_PATTERNS:
                 if re.search(pattern, command, re.IGNORECASE):
-                    return PolicyDecision(False, f"blocked by command policy: {pattern}")
-        if tool in {"read_file", "write_file"}:
-            path = str(arguments.get("path", ""))
-            if path.startswith("/") or ".." in path.replace("\\", "/").split("/"):
-                return PolicyDecision(False, "path must stay inside workspace")
+                    return PolicyDecision(False, "blocked by command policy")
         return PolicyDecision(True, "allowed")
