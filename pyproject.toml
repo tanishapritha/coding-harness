@@ -1,0 +1,14 @@
+[project]
+name = "coding-harness"
+version = "0.1.0"
+description = "Controlled runtime for AI coding agents"
+requires-python = ">=3.11"
+dependencies = [
+  "streamlit>=1.38",
+  "openai>=1.40",
+  "pydantic>=2.8",
+  "python-dotenv>=1.0",
+]
+
+[project.scripts]
+forge = "harness.cli:main"
