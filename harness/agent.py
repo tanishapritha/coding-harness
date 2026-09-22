@@ -30,7 +30,7 @@ class AgentRuntime:
         self.memory=SQLiteMemory("~/.forge/forge.db",repo_id)
         self.context_engine=ContextEngine(self.workspace,self.memory)
         self.state=RunState(self.run_id,"",str(self.workspace.root),max_iterations=self.settings.max_iterations)
-        self.tools=ToolRegistry(self.workspace,PolicyEngine(),self.settings.command_timeout)
+        self.tools=ToolRegistry(self.workspace,PolicyEngine(),self.settings.command_timeout,self.memory)
         self.model=Model(self.settings)
         self.trajectory=TrajectoryStore()
         self.last_context=None
