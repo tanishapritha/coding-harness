@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from ..workspace import Workspace
 
 IGNORED_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build"}
