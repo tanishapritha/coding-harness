@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Callable
 
+from .memory.sqlite import SQLiteMemory
 from .policy import PolicyEngine
 from .workspace import Workspace
 
 
 class ToolRegistry:
-    def __init__(self, workspace: Workspace, policy: PolicyEngine, timeout: int = 30):
+    def __init__(self, workspace: Workspace, policy: PolicyEngine, timeout: int = 30, memory: SQLiteMemory | None = None):
         self.workspace = workspace
         self.policy = policy
         self.timeout = timeout
+        self.memory = memory
         self.handlers: dict[str, Callable[..., Any]] = {
             "list_files": self.list_files,
             "read_file": self.read_file,
@@ -20,6 +21,7 @@ class ToolRegistry:
             "run_tests": self.run_tests,
             "git_status": self.git_status,
             "git_diff": self.git_diff,
+            "remember_memory": self.remember_memory,
         }
 
     def schemas(self) -> list[dict]:
@@ -31,6 +33,7 @@ class ToolRegistry:
             {"type":"function","function":{"name":"run_tests","description":"Run the repository test suite. Prefer this over raw test commands.","parameters":{"type":"object","properties":{}}}},
             {"type":"function","function":{"name":"git_status","description":"Show git status.","parameters":{"type":"object","properties":{}}}},
             {"type":"function","function":{"name":"git_diff","description":"Show the current git diff.","parameters":{"type":"object","properties":{}}}},
+            {"type":"function","function":{"name":"remember_memory","description":"Store a durable repository fact only when it is directly supported by repository evidence. Do not store guesses or temporary task details.","parameters":{"type":"object","properties":{"content":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}},"required":["content"]}}},
         ]
 
     def execute(self, name: str, arguments: dict) -> dict:
@@ -74,3 +77,9 @@ class ToolRegistry:
 
     def git_diff(self) -> str:
         return self.workspace.git("diff", "--", ".")
+
+    def remember_memory(self, content: str, confidence: float = 0.7) -> dict:
+        if self.memory is None:
+            return {"stored": False, "reason": "memory disabled"}
+        memory_id = self.memory.remember(content, confidence=confidence)
+        return {"stored": True, "memory_id": memory_id, "content": content}
