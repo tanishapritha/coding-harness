@@ -126,7 +126,6 @@ class AgentRuntime:
 
     def _persist(self):
         self.trajectory.save_run(self.state,self.last_context.prompt() if self.last_context else None)
-        for event in self.events.snapshot(): self.trajectory.append_event(self.run_id,event)
 
     def _emit(self,typ,on_event,**data):
         event=self.events.emit(typ,**data).to_dict()
