@@ -25,9 +25,10 @@ class PolicyEngine:
     def check(self, tool: str, arguments: dict) -> PolicyDecision:
         if tool in {"read_file", "write_file"}:
             path = str(arguments.get("path", "")).replace("\\", "/")
-            normalized = path.lstrip("./")
-            if path.startswith("/") or ".." in normalized.split("/"):
+            parts = [part for part in path.split("/") if part not in ("", ".")]
+            if path.startswith("/") or (parts and parts[0] == "..") or ".." in parts:
                 return PolicyDecision(False, "path must stay inside workspace")
+            normalized = "/".join(parts)
             if normalized in PROTECTED_PATHS or normalized.startswith(".ssh/"):
                 return PolicyDecision(False, "protected credential path")
         if tool == "run_command":
