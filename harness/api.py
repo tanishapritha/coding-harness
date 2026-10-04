@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Cookie, FastAPI, HTTPException, Response
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -97,7 +98,7 @@ def github_login() -> dict[str, str]:
     return {"url": oauth_url(state), "state": state}
 
 @app.get("/auth/github/callback")
-async def github_callback(code: str, state: str, response: Response) -> dict[str, Any]:
+async def github_callback(code: str, state: str, response: Response):
     try:
         _session_serializer().loads(state)
     except BadSignature as exc:
@@ -106,8 +107,12 @@ async def github_callback(code: str, state: str, response: Response) -> dict[str
     profile = await github_user(token)
     user = upsert_user(profile)
     session = _session_serializer().dumps({"user_id": user.id})
-    response.set_cookie("forge_session", session, httponly=True, secure=True, samesite="lax", max_age=60 * 60 * 24 * 30)
-    return {"status": "authenticated", "user": {"id": user.id, "login": user.login, "name": user.name, "avatar_url": user.avatar_url}}
+    response.set_cookie("forge_session", session, httponly=True, secure=False, samesite="lax", max_age=60 * 60 * 24 * 30)
+    import os
+    frontend = os.getenv("FORGE_FRONTEND_URL", "http://localhost:3000")
+    redirect = RedirectResponse(url=frontend, status_code=302)
+    redirect.set_cookie("forge_session", session, httponly=True, secure=False, samesite="lax", max_age=60 * 60 * 24 * 30)
+    return redirect
 
 @app.get("/auth/me")
 def auth_me(forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
