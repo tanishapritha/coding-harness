@@ -150,7 +150,7 @@ export default function Home() {
               <Metric label="Run" value={selected.run_id} />
             </div>
             <div className="grid">
-              <Panel title="Task"><p className="task">{selected.task}</p><p className="muted">{selected.workspace}</p></Panel>
+              <Panel title="Task"><p className="task">{selected.task}</p><p className="muted">{selected.workspace}</p><div className="plan"><div className="subhead">Plan</div>{(selected as Run & { plan?: string[] }).plan?.length ? (selected as Run & { plan?: string[] }).plan!.map((step, i) => <div className="plan-step" key={i}><span>{i + 1}</span>{step}</div>) : <span className="muted">Plan will appear when the agent starts planning.</span>}</div></Panel>
               <Panel title="Verification"><pre>{JSON.stringify(selected.verification || {}, null, 2)}</pre></Panel>
               <Panel title="Live trajectory" wide><div className="timeline">{currentEvents.map((e, i) => <div className="event" key={i}><span>{new Date(e.timestamp).toLocaleTimeString()}</span><strong>{e.type}</strong><code>{JSON.stringify(e.data)}</code></div>)}</div></Panel>
               <Panel title="Changed files"><ul>{(selected.changed_files || []).map((f) => <li key={f}>{f}</li>)}</ul></Panel>
