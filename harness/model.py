@@ -20,7 +20,9 @@ Your output is tool calls or a concise final status. Do not emit hidden reasonin
 class Model:
     def __init__(self, settings: Settings):
         if not settings.api_key:
-            raise RuntimeError("Set OPENROUTER_API_KEY or OPENAI_API_KEY before running the agent.")
+            raise RuntimeError(
+                f"Set the API key for the configured provider ({settings.provider})."
+            )
         self.client = OpenAI(api_key=settings.api_key, base_url=settings.base_url)
         self.model = settings.model
 
