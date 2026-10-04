@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ from .config import Settings
 from .memory.sqlite import SQLiteMemory
 from .trajectories.store import TrajectoryStore
 from .workspace import Workspace
+from .cloud.models import WorkspaceCreate
+from .cloud.workspaces import DockerWorkspaceManager
 
 app = FastAPI(title="Forge API", version="1.1.0")
 
@@ -61,6 +64,7 @@ executor = ThreadPoolExecutor(max_workers=4)
 active: dict[str, AgentRuntime] = {}
 lock = threading.Lock()
 store = TrajectoryStore()
+cloud_workspaces = DockerWorkspaceManager()
 
 
 class RunRequest(BaseModel):
@@ -143,6 +147,42 @@ async def github_repos(forge_session: str | None = Cookie(default=None)) -> list
         token = await installation_token(item.installation_id)
         repos.extend(await github_repositories(token))
     return repos
+
+
+@app.post("/cloud/workspaces")
+def create_cloud_workspace(request: WorkspaceCreate, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    _current_user(forge_session)
+    try:
+        spec = cloud_workspaces.create(request.repo_url, request.base_branch)
+    except (RuntimeError, subprocess.SubprocessError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"workspace_id": spec.id, "path": str(spec.path), "repo": spec.repo, "branch": spec.branch}
+
+@app.get("/cloud/workspaces/{workspace_id}")
+def get_cloud_workspace(workspace_id: str, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    _current_user(forge_session)
+    try:
+        return cloud_workspaces.status(workspace_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Workspace not found") from exc
+
+@app.post("/cloud/workspaces/{workspace_id}/exec")
+def exec_cloud_workspace(workspace_id: str, command: str, timeout: int = 60, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    _current_user(forge_session)
+    if timeout < 1 or timeout > 300:
+        raise HTTPException(400, "timeout must be between 1 and 300 seconds")
+    try:
+        return cloud_workspaces.run_sandbox(workspace_id, command, timeout)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Workspace not found") from exc
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.delete("/cloud/workspaces/{workspace_id}")
+def delete_cloud_workspace(workspace_id: str, forge_session: str | None = Cookie(default=None)) -> dict[str, str]:
+    _current_user(forge_session)
+    cloud_workspaces.destroy(workspace_id)
+    return {"status": "destroyed", "workspace_id": workspace_id}
 
 @app.get("/health")
 def health() -> dict[str, str]:
