@@ -118,6 +118,19 @@ Forge is a local development harness, **not a production sandbox**. Shell comman
 pytest -q
 ```
 
+## Cloud foundation
+
+Forge now also contains the first cloud product slice:
+
+- GitHub OAuth sessions
+- Neon/Postgres persistence
+- GitHub App installation support
+- authenticated repository discovery
+- per-task Git workspaces under `~/.forge/workspaces`
+- isolated Forge branches for cloud tasks
+
+The current workspace manager creates repository workspaces on the Forge host. **It is not yet a secure remote sandbox.** Docker/container isolation is the next boundary before executing untrusted repository commands in a hosted deployment.
+
 ## Next engineering layer
 
 The base system is intentionally complete before adding a single hard research problem. Candidate directions include context selection, long-horizon reliability, failure diagnosis, trajectory evaluation, or safe autonomous execution.
