@@ -7,6 +7,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from .sandbox import DockerSandbox
+
 
 @dataclass(frozen=True)
 class WorkspaceSpec:
@@ -52,3 +54,11 @@ class DockerWorkspaceManager:
         path = self.root / workspace_id
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)
+
+
+    def run_sandbox(self, workspace_id: str, command: str, timeout: int = 60) -> dict[str, object]:
+        path = self.root / workspace_id
+        if not path.exists():
+            raise FileNotFoundError(workspace_id)
+        result = DockerSandbox().run(path, command, timeout)
+        return {"exit_code": result.exit_code, "output": result.output}
