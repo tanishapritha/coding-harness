@@ -35,7 +35,7 @@ class AgentRuntime:
             max_iterations=self.settings.max_iterations,
         )
         self.tools = ToolRegistry(
-            self.workspace, PolicyEngine(), self.settings.command_timeout, self.memory, self.run_id
+            self.workspace, PolicyEngine(), self.settings.command_timeout, self.memory, self.run_id, self.state
         )
         self.model = Model(self.settings)
         self.trajectory = TrajectoryStore()
