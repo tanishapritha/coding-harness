@@ -7,10 +7,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Cookie, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import BaseModel, Field
+
+from .cloud.db import get_user_by_id, init_db, installations_for_user, save_installation, upsert_user
+from .cloud.github import exchange_code, installation_token, oauth_url, repositories as github_repositories, user as github_user
 
 from .agent import AgentRuntime
 from .config import Settings
@@ -18,7 +22,32 @@ from .memory.sqlite import SQLiteMemory
 from .trajectories.store import TrajectoryStore
 from .workspace import Workspace
 
-app = FastAPI(title="Forge API", version="1.0.0")
+app = FastAPI(title="Forge API", version="1.1.0")
+
+def _session_serializer() -> URLSafeSerializer:
+    import os
+    secret = os.getenv("FORGE_SESSION_SECRET")
+    if not secret:
+        raise RuntimeError("FORGE_SESSION_SECRET is required for cloud auth")
+    return URLSafeSerializer(secret, salt="forge-session")
+
+@app.on_event("startup")
+def _startup() -> None:
+    import os
+    if os.getenv("DATABASE_URL"):
+        init_db()
+
+def _current_user(forge_session: str | None):
+    if not forge_session:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = _session_serializer().loads(forge_session)
+    except BadSignature as exc:
+        raise HTTPException(401, "Invalid session") from exc
+    user = get_user_by_id(int(payload["user_id"]))
+    if user is None:
+        raise HTTPException(401, "User not found")
+    return user
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -59,6 +88,51 @@ def _run(runtime: AgentRuntime, task: str) -> None:
         with lock:
             active.pop(runtime.run_id, None)
 
+
+
+@app.get("/auth/github/login")
+def github_login() -> dict[str, str]:
+    import secrets
+    state = secrets.token_urlsafe(24)
+    return {"url": oauth_url(state), "state": state}
+
+@app.get("/auth/github/callback")
+async def github_callback(code: str, state: str) -> dict[str, Any]:
+    token = await exchange_code(code)
+    profile = await github_user(token)
+    user = upsert_user(profile)
+    session = _session_serializer().dumps({"user_id": user.id})
+    return {"status": "authenticated", "session": session, "user": {"id": user.id, "login": user.login, "name": user.name, "avatar_url": user.avatar_url}}
+
+@app.get("/auth/me")
+def auth_me(forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    user = _current_user(forge_session)
+    return {"id": user.id, "login": user.login, "name": user.name, "avatar_url": user.avatar_url}
+
+@app.get("/github/install")
+def github_install(forge_session: str | None = Cookie(default=None)) -> dict[str, str]:
+    _current_user(forge_session)
+    import os
+    slug = os.getenv("GITHUB_APP_SLUG")
+    if not slug:
+        raise HTTPException(500, "GITHUB_APP_SLUG is required")
+    return {"url": f"https://github.com/apps/{slug}/installations/new"}
+
+@app.get("/github/installation/callback")
+def github_installation_callback(installation_id: str, setup_action: str = "install", forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    user = _current_user(forge_session)
+    save_installation(installation_id, "unknown", "unknown", user.id)
+    return {"status": "connected", "installation_id": installation_id, "setup_action": setup_action}
+
+@app.get("/github/repositories")
+async def github_repos(forge_session: str | None = Cookie(default=None)) -> list[dict[str, Any]]:
+    user = _current_user(forge_session)
+    installations = installations_for_user(user.id)
+    repos: list[dict[str, Any]] = []
+    for item in installations:
+        token = await installation_token(item.installation_id)
+        repos.extend(await github_repositories(token))
+    return repos
 
 @app.get("/health")
 def health() -> dict[str, str]:
