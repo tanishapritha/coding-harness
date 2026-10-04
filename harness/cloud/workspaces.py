@@ -40,6 +40,14 @@ class DockerWorkspaceManager:
             shutil.rmtree(path, ignore_errors=True)
             raise
 
+    def status(self, workspace_id: str) -> dict[str, str]:
+        path = self.root / workspace_id
+        if not path.exists():
+            raise FileNotFoundError(workspace_id)
+        branch = self._run(["git", "-C", str(path), "branch", "--show-current"])
+        status = self._run(["git", "-C", str(path), "status", "--short"])
+        return {"workspace_id": workspace_id, "path": str(path), "branch": branch, "status": status}
+
     def destroy(self, workspace_id: str) -> None:
         path = self.root / workspace_id
         if path.exists():
