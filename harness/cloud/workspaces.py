@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, shutil, subprocess, uuid
+import os, shutil, subprocess, uuid
 from dataclasses import dataclass
 from pathlib import Path
 from .sandbox import DockerSandbox
@@ -35,7 +35,6 @@ class DockerWorkspaceManager:
             self._run(["git","clone","--depth","1","--branch",base_branch,url,str(path)],env=self._askpass(token) if token else None)
             branch=f"forge/{wid}"
             self._run(["git","-C",str(path),"checkout","-b",branch])
-            (path/".forge-workspace.json").write_text(json.dumps({"workspace_id":wid,"repo_full_name":repo_full_name,"branch":branch}),encoding="utf-8")
             return WorkspaceSpec(wid,path,repo_full_name,branch)
         except Exception:
             shutil.rmtree(path,ignore_errors=True); raise
@@ -43,8 +42,7 @@ class DockerWorkspaceManager:
     def status(self,workspace_id:str)->dict[str,str]:
         path=self.root/workspace_id
         if not path.exists(): raise FileNotFoundError(workspace_id)
-        meta=json.loads((path/".forge-workspace.json").read_text()) if (path/".forge-workspace.json").exists() else {}
-        return {"workspace_id":workspace_id,"path":str(path),"repo_full_name":meta.get("repo_full_name",""),"branch":self._run(["git","-C",str(path),"branch","--show-current"]),"status":self._run(["git","-C",str(path),"status","--short"])}
+        return {"workspace_id":workspace_id,"path":str(path),"branch":self._run(["git","-C",str(path),"branch","--show-current"]),"status":self._run(["git","-C",str(path),"status","--short"])}
 
     def destroy(self,workspace_id:str)->None:
         path=self.root/workspace_id
