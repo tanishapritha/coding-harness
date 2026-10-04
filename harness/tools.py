@@ -8,11 +8,19 @@ from .workspace import Workspace
 
 
 class ToolRegistry:
-    def __init__(self, workspace: Workspace, policy: PolicyEngine, timeout: int = 30, memory: SQLiteMemory | None = None):
+    def __init__(
+        self,
+        workspace: Workspace,
+        policy: PolicyEngine,
+        timeout: int = 30,
+        memory: SQLiteMemory | None = None,
+        run_id: str | None = None,
+    ):
         self.workspace = workspace
         self.policy = policy
         self.timeout = timeout
         self.memory = memory
+        self.run_id = run_id
         self.handlers: dict[str, Callable[..., Any]] = {
             "list_files": self.list_files,
             "read_file": self.read_file,
@@ -22,6 +30,7 @@ class ToolRegistry:
             "git_status": self.git_status,
             "git_diff": self.git_diff,
             "remember_memory": self.remember_memory,
+            "search_memory": self.search_memory,
         }
 
     def schemas(self) -> list[dict]:
@@ -33,7 +42,8 @@ class ToolRegistry:
             {"type":"function","function":{"name":"run_tests","description":"Run the repository test suite. Prefer this over raw test commands.","parameters":{"type":"object","properties":{}}}},
             {"type":"function","function":{"name":"git_status","description":"Show git status.","parameters":{"type":"object","properties":{}}}},
             {"type":"function","function":{"name":"git_diff","description":"Show the current git diff.","parameters":{"type":"object","properties":{}}}},
-            {"type":"function","function":{"name":"remember_memory","description":"Store a durable repository fact only when it is directly supported by repository evidence. Do not store guesses or temporary task details.","parameters":{"type":"object","properties":{"content":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}},"required":["content"]}}},
+            {"type":"function","function":{"name":"remember_memory","description":"Store a durable repository fact supported by evidence.","parameters":{"type":"object","properties":{"content":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}},"required":["content"]}}},
+            {"type":"function","function":{"name":"search_memory","description":"Search persistent repository memory before making architecture decisions.","parameters":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["query"]}}},
         ]
 
     def execute(self, name: str, arguments: dict) -> dict:
@@ -81,5 +91,10 @@ class ToolRegistry:
     def remember_memory(self, content: str, confidence: float = 0.7) -> dict:
         if self.memory is None:
             return {"stored": False, "reason": "memory disabled"}
-        memory_id = self.memory.remember(content, confidence=confidence)
+        memory_id = self.memory.remember(content, source_run=self.run_id, confidence=confidence)
         return {"stored": True, "memory_id": memory_id, "content": content}
+
+    def search_memory(self, query: str, limit: int = 8) -> list[dict]:
+        if self.memory is None:
+            return []
+        return self.memory.search(query, limit=limit)

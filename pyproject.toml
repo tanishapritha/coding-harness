@@ -4,10 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coding-harness"
-version = "0.2.0"
-description = "Forge: a local runtime for reliable AI coding agents"
+version = "1.0.0"
+description = "Forge: a persistent local runtime for reliable AI coding agents"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
   "streamlit>=1.38",
   "openai>=1.40",
   "pydantic>=2.8",
