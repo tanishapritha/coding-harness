@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, FastAPI, HTTPException
+from fastapi import Cookie, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -93,16 +93,21 @@ def _run(runtime: AgentRuntime, task: str) -> None:
 @app.get("/auth/github/login")
 def github_login() -> dict[str, str]:
     import secrets
-    state = secrets.token_urlsafe(24)
+    state = _session_serializer().dumps({"oauth_state": secrets.token_urlsafe(24)})
     return {"url": oauth_url(state), "state": state}
 
 @app.get("/auth/github/callback")
-async def github_callback(code: str, state: str) -> dict[str, Any]:
+async def github_callback(code: str, state: str, response: Response) -> dict[str, Any]:
+    try:
+        _session_serializer().loads(state)
+    except BadSignature as exc:
+        raise HTTPException(400, "Invalid OAuth state") from exc
     token = await exchange_code(code)
     profile = await github_user(token)
     user = upsert_user(profile)
     session = _session_serializer().dumps({"user_id": user.id})
-    return {"status": "authenticated", "session": session, "user": {"id": user.id, "login": user.login, "name": user.name, "avatar_url": user.avatar_url}}
+    response.set_cookie("forge_session", session, httponly=True, secure=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    return {"status": "authenticated", "user": {"id": user.id, "login": user.login, "name": user.name, "avatar_url": user.avatar_url}}
 
 @app.get("/auth/me")
 def auth_me(forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
