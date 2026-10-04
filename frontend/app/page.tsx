@@ -45,7 +45,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
-  const [githubConnected, setGithubConnected] = useState(false);
+  const [githubConnected, setGithubConnected] = useState(false);\n  const [cloudWorkspaceId, setCloudWorkspaceId] = useState("");\n  const [publishing, setPublishing] = useState(false);\n  const [prUrl, setPrUrl] = useState("");
 
   const refresh = async () => {
     try {
@@ -96,12 +96,12 @@ export default function Home() {
   };
 
   const start = async () => {
-    if (!workspace || !task.trim()) return;
+    if (!cloudWorkspaceId || !task.trim()) return;
     setLoading(true); setError("");
     try {
-      const run = await api<{ run_id: string }>("/runs", {
+      const run = await api<{ run_id: string }>("/cloud/runs", {
         method: "POST",
-        body: JSON.stringify({ workspace, task }),
+        body: JSON.stringify({ workspace_id: cloudWorkspaceId, task }),
       });
       const state = await api<Run>("/runs/" + run.run_id);
       setSelected(state);
@@ -155,7 +155,18 @@ export default function Home() {
         {githubConnected && <section>
           <div className="section-title">GitHub repositories</div>
           {githubRepos.slice(0, 20).map((repo) => (
-            <button className="run-row" key={repo.id} onClick={() => setWorkspace(repo.full_name)}>
+            <button className="run-row" key={repo.id} onClick={async () => {
+              try {
+                const w = await api<{workspace_id:string;path:string}>("/cloud/workspaces", {
+                  method: "POST",
+                  body: JSON.stringify({repo_full_name: repo.full_name, base_branch: repo.default_branch}),
+                });
+                setCloudWorkspaceId(w.workspace_id);
+                setWorkspace(repo.full_name);
+                setFiles([]);
+                setMemory([]);
+              } catch (e) { setError(String(e)); }
+            }}>
               <span><strong>{repo.full_name}</strong><small>{repo.private ? "Private" : "Public"} · {repo.default_branch}</small></span>
             </button>
           ))}
@@ -168,10 +179,10 @@ export default function Home() {
         <section>
           <label>Task</label>
           <textarea value={task} onChange={(e) => setTask(e.target.value)} placeholder="Fix the failing tests, inspect the repository, implement the smallest coherent change, and verify it." />
-          <button className="primary" onClick={start} disabled={loading || !workspace || !task.trim()}>
+          <button className="primary" onClick={start} disabled={loading || !cloudWorkspaceId || !task.trim()}>
             {loading ? "Starting..." : "Run Forge"}
           </button>
-          {selected && !["COMPLETED","FAILED","STOPPED"].includes(selected.status) && <button className="danger" onClick={stop}>Stop run</button>}
+          {selected && !["COMPLETED","FAILED","STOPPED"].includes(selected.status) && <button className="danger" onClick={stop}>Stop run</button>}\n          {selected?.status === "COMPLETED" && cloudWorkspaceId && <button disabled={publishing} onClick={async () => {\n            setPublishing(true); setError("");\n            try { const r = await api<{pr_url:string}>("/cloud/publish", {method:"POST", body:JSON.stringify({workspace_id:cloudWorkspaceId,title:selected.task.slice(0,80),body:"Created by Forge."})}); setPrUrl(r.pr_url); } catch(e) { setError(String(e)); } finally { setPublishing(false); }\n          }}>{publishing ? "Publishing..." : "Commit + open PR"}</button>}\n          {prUrl && <a href={prUrl} target="_blank" rel="noreferrer">Open PR</a>}
         </section>
         {error && <div className="error">{error}</div>}
         <section className="runs">
