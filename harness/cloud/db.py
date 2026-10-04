@@ -99,3 +99,8 @@ def save_installation(installation_id: str, account_login: str, account_type: st
 def installations_for_user(user_id: int) -> list[GitHubInstallation]:
     with Session(engine()) as session:
         return session.query(GitHubInstallation).filter_by(user_id=user_id).all()
+
+
+def get_user_by_id(user_id: int) -> User | None:
+    with Session(engine()) as session:
+        return session.get(User, user_id)
