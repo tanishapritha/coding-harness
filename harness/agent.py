@@ -20,10 +20,10 @@ from .workspace import Workspace
 
 
 class AgentRuntime:
-    def __init__(self, workspace_path: str, settings: Settings | None = None):
+    def __init__(self, workspace_path: str, settings: Settings | None = None, sandbox: bool = False):
         self.settings = settings or Settings()
         self.run_id = uuid.uuid4().hex[:12]
-        self.workspace = Workspace(workspace_path)
+        if sandbox:\n            from .cloud.agent import SandboxedWorkspace\n            self.workspace = SandboxedWorkspace(workspace_path)\n        else:\n            self.workspace = Workspace(workspace_path)
         self.events = EventBus()
         self.logger = get_logger()
         self.trace = TraceRecorder(self.run_id)
