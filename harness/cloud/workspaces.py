@@ -23,7 +23,7 @@ class DockerWorkspaceManager:
 
     def _askpass(self,token:str)->dict[str,str]:
         script=self.root/"git-askpass.sh"
-        script.write_text("#!/bin/sh\necho \"$GIT_PASSWORD\"\n",encoding="utf-8")
+        script.write_text("#!/bin/sh\ncase \"$1\" in\n  *Username*) echo \"x-access-token\" ;;\n  *) echo \"$GIT_PASSWORD\" ;;\nesac\n",encoding="utf-8")
         try: script.chmod(0o700)
         except OSError: pass
         return {**os.environ,"GIT_ASKPASS":str(script),"GIT_TERMINAL_PROMPT":"0","GIT_USERNAME":"x-access-token","GIT_PASSWORD":token}
