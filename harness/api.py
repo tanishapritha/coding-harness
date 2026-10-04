@@ -166,6 +166,18 @@ def get_cloud_workspace(workspace_id: str, forge_session: str | None = Cookie(de
     except FileNotFoundError as exc:
         raise HTTPException(404, "Workspace not found") from exc
 
+@app.post("/cloud/workspaces/{workspace_id}/exec")
+def exec_cloud_workspace(workspace_id: str, command: str, timeout: int = 60, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    _current_user(forge_session)
+    if timeout < 1 or timeout > 300:
+        raise HTTPException(400, "timeout must be between 1 and 300 seconds")
+    try:
+        return cloud_workspaces.run_sandbox(workspace_id, command, timeout)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Workspace not found") from exc
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
 @app.delete("/cloud/workspaces/{workspace_id}")
 def delete_cloud_workspace(workspace_id: str, forge_session: str | None = Cookie(default=None)) -> dict[str, str]:
     _current_user(forge_session)
