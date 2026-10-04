@@ -18,6 +18,10 @@ dependencies = [
   "pytest>=8.0",
   "langfuse>=3.0",
   "ruff>=0.6",
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.2",
+  "pyjwt[crypto]>=2.9",
+  "itsdangerous>=2.2",
 ]
 
 [project.scripts]
