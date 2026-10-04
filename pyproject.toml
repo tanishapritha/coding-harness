@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Forge: a persistent local runtime for reliable AI coding agents"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115",
+  "fastapi>=0.115",\n  "httpx>=0.27",
   "uvicorn[standard]>=0.30",
   "streamlit>=1.38",
   "openai>=1.40",
