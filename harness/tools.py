@@ -94,7 +94,7 @@ class ToolRegistry:
         memory_id = self.memory.remember(content, source_run=self.run_id, confidence=confidence)
         return {"stored": True, "memory_id": memory_id, "content": content}
 
-    def search_memory(self, query: str, limit: int = 8) -> list[dict]:
+    def update_plan(self, steps: list[str]) -> dict:\n        if self.state is None:\n            return {"updated": False, "reason": "state unavailable"}\n        self.state.plan = [s.strip() for s in steps if s.strip()]\n        return {"updated": True, "plan": self.state.plan}\n\n    def search_memory(self, query: str, limit: int = 8) -> list[dict]:
         if self.memory is None:
             return []
         return self.memory.search(query, limit=limit)
