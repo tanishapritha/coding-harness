@@ -15,15 +15,15 @@ from fastapi.responses import StreamingResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import BaseModel, Field
 
-from .cloud.db import get_user_by_id, init_db, installations_for_user, save_installation, upsert_user
-from .cloud.github import exchange_code, installation_token, oauth_url, repositories as github_repositories, user as github_user
+from .cloud.db import delete_workspace as delete_cloud_workspace_record, get_user_by_id, get_workspace as get_cloud_workspace_record, init_db, installations_for_user, save_installation, save_workspace, upsert_user
+from .cloud.github import create_pull_request, exchange_code, installation_for_repo, installation_token, oauth_url, repositories as github_repositories, user as github_user
 
 from .agent import AgentRuntime
 from .config import Settings
 from .memory.sqlite import SQLiteMemory
 from .trajectories.store import TrajectoryStore
 from .workspace import Workspace
-from .cloud.models import WorkspaceCreate
+from .cloud.models import CloudPublishRequest, CloudRunRequest, WorkspaceCreate
 from .cloud.workspaces import DockerWorkspaceManager
 
 app = FastAPI(title="Forge API", version="1.1.0")
@@ -150,25 +150,31 @@ async def github_repos(forge_session: str | None = Cookie(default=None)) -> list
 
 
 @app.post("/cloud/workspaces")
-def create_cloud_workspace(request: WorkspaceCreate, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
-    _current_user(forge_session)
+async def create_cloud_workspace(request: WorkspaceCreate, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    user = _current_user(forge_session)
     try:
-        spec = cloud_workspaces.create(request.repo_url, request.base_branch)
-    except (RuntimeError, subprocess.SubprocessError, FileNotFoundError) as exc:
+        installations = installations_for_user(user.id)
+        installation_id, clone_url = await installation_for_repo([i.installation_id for i in installations], request.repo_full_name)
+        token = await installation_token(installation_id)
+        spec = cloud_workspaces.create(request.repo_full_name, request.base_branch, token=token, clone_url=clone_url)
+        save_workspace(spec.id, user.id, spec.repo, str(spec.path), spec.branch)
+        return {"workspace_id": spec.id, "path": str(spec.path), "repo_full_name": spec.repo, "branch": spec.branch}
+    except (RuntimeError, subprocess.SubprocessError, FileNotFoundError, PermissionError) as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"workspace_id": spec.id, "path": str(spec.path), "repo": spec.repo, "branch": spec.branch}
 
 @app.get("/cloud/workspaces/{workspace_id}")
 def get_cloud_workspace(workspace_id: str, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
-    _current_user(forge_session)
-    try:
-        return cloud_workspaces.status(workspace_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, "Workspace not found") from exc
+    user = _current_user(forge_session)
+    record = get_cloud_workspace_record(workspace_id, user.id)
+    if record is None:
+        raise HTTPException(404, "Workspace not found")
+    return cloud_workspaces.status(workspace_id)
 
 @app.post("/cloud/workspaces/{workspace_id}/exec")
 def exec_cloud_workspace(workspace_id: str, command: str, timeout: int = 60, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
-    _current_user(forge_session)
+    user = _current_user(forge_session)
+    if get_cloud_workspace_record(workspace_id, user.id) is None:
+        raise HTTPException(404, "Workspace not found")
     if timeout < 1 or timeout > 300:
         raise HTTPException(400, "timeout must be between 1 and 300 seconds")
     try:
@@ -180,9 +186,43 @@ def exec_cloud_workspace(workspace_id: str, command: str, timeout: int = 60, for
 
 @app.delete("/cloud/workspaces/{workspace_id}")
 def delete_cloud_workspace(workspace_id: str, forge_session: str | None = Cookie(default=None)) -> dict[str, str]:
-    _current_user(forge_session)
+    user = _current_user(forge_session)
+    if get_cloud_workspace_record(workspace_id, user.id) is None:
+        raise HTTPException(404, "Workspace not found")
     cloud_workspaces.destroy(workspace_id)
+    delete_cloud_workspace_record(workspace_id, user.id)
     return {"status": "destroyed", "workspace_id": workspace_id}
+
+@app.post("/cloud/runs", status_code=202)
+def create_cloud_run(request: CloudRunRequest, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    user = _current_user(forge_session)
+    record = get_cloud_workspace_record(request.workspace_id, user.id)
+    if record is None:
+        raise HTTPException(404, "Workspace not found")
+    base = Settings()
+    settings = Settings(model=request.model or base.model, api_key=base.api_key, base_url=base.base_url,
+                        max_iterations=request.max_iterations, command_timeout=base.command_timeout)
+    runtime = AgentRuntime(record.path, settings, sandbox=True)
+    with lock:
+        active[runtime.run_id] = runtime
+    executor.submit(_run, runtime, request.task)
+    return {"run_id": runtime.run_id, "status": "CREATED", "workspace_id": request.workspace_id}
+
+@app.post("/cloud/publish")
+async def publish_cloud_run(request: CloudPublishRequest, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    user = _current_user(forge_session)
+    record = get_cloud_workspace_record(request.workspace_id, user.id)
+    if record is None:
+        raise HTTPException(404, "Workspace not found")
+    installations = installations_for_user(user.id)
+    try:
+        installation_id, _ = await installation_for_repo([i.installation_id for i in installations], record.repo_full_name)
+        token = await installation_token(installation_id)
+        pushed = cloud_workspaces.commit_and_push(request.workspace_id, token, request.title)
+        pr = await create_pull_request(token, record.repo_full_name, request.title, request.body, pushed["branch"], request.base_branch)
+        return {"branch": pushed["branch"], "pr_number": pr["number"], "pr_url": pr["html_url"]}
+    except (RuntimeError, subprocess.SubprocessError, PermissionError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 @app.get("/health")
 def health() -> dict[str, str]:
