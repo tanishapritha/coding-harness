@@ -19,9 +19,13 @@ type Event = { type: string; timestamp: string; data: Record<string, unknown> };
 
 const API = process.env.NEXT_PUBLIC_FORGE_API || "http://127.0.0.1:8000";
 
+type User = { id: number; login: string; name?: string | null; avatar_url?: string | null };
+type GitHubRepo = { id: number; full_name: string; html_url: string; default_branch: string; private: boolean };
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API + path, {
     ...init,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
   });
   if (!res.ok) throw new Error(await res.text());
@@ -39,6 +43,9 @@ export default function Home() {
   const [diff, setDiff] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
+  const [githubConnected, setGithubConnected] = useState(false);
 
   const refresh = async () => {
     try {
@@ -51,7 +58,32 @@ export default function Home() {
     } catch (e) { setError(String(e)); }
   };
 
-  useEffect(() => { refresh(); const id = setInterval(refresh, 2000); return () => clearInterval(id); }, [selected?.run_id]);
+  useEffect(() => {
+    refresh();
+    api<User>("/auth/me").then((u) => setUser(u)).catch(() => {});
+    const id = setInterval(refresh, 2000);
+    return () => clearInterval(id);
+  }, [selected?.run_id]);
+
+  const signIn = async () => {
+    const result = await api<{ url: string }>("/auth/github/login");
+    window.location.href = result.url;
+  };
+
+  const connectGithub = async () => {
+    const result = await api<{ url: string }>("/github/install");
+    window.location.href = result.url;
+  };
+
+  const loadGithubRepos = async () => {
+    try {
+      const repos = await api<GitHubRepo[]>("/github/repositories");
+      setGithubRepos(repos);
+      setGithubConnected(true);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const connect = async () => {
     setError("");
@@ -108,6 +140,26 @@ export default function Home() {
     <main className="shell">
       <aside className="sidebar">
         <div className="brand"><span>⚒</span><div><strong>Forge</strong><small>coding-agent runtime</small></div></div>
+        <section>
+          <div className="section-title">Account</div>
+          {user ? (
+            <>
+              <div className="muted">@{user.login}</div>
+              <button onClick={connectGithub}>Connect GitHub App</button>
+              <button onClick={loadGithubRepos}>Load GitHub repositories</button>
+            </>
+          ) : (
+            <button className="primary" onClick={signIn}>Sign in with GitHub</button>
+          )}
+        </section>
+        {githubConnected && <section>
+          <div className="section-title">GitHub repositories</div>
+          {githubRepos.slice(0, 20).map((repo) => (
+            <button className="run-row" key={repo.id} onClick={() => setWorkspace(repo.full_name)}>
+              <span><strong>{repo.full_name}</strong><small>{repo.private ? "Private" : "Public"} · {repo.default_branch}</small></span>
+            </button>
+          ))}
+        </section>}
         <section>
           <label>Repository path</label>
           <input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="/path/to/repository" />
