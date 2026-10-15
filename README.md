@@ -134,3 +134,7 @@ The current workspace manager creates repository workspaces on the Forge host. *
 ## Next engineering layer
 
 The base system is intentionally complete before adding a single hard research problem. Candidate directions include context selection, long-horizon reliability, failure diagnosis, trajectory evaluation, or safe autonomous execution.
+
+## Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for Vercel (Next.js frontend) and Render (FastAPI backend) setup, GitHub OAuth callback configuration, provider keys, and hosted-runtime limitations. Copy `.env.example` as a reference only; store real secrets in the Vercel/Render environment-variable dashboards, never in Git.
