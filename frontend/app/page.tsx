@@ -12,7 +12,6 @@ type User = { id: number; login: string; name?: string | null; avatar_url?: stri
 type GitHubRepo = { id: number; full_name: string; html_url: string; default_branch: string; private: boolean };
 
 const API = (process.env.NEXT_PUBLIC_FORGE_API || "http://127.0.0.1:8000").replace(/\/$/, "");
-const CROSS_SITE_API = /^https:\/\//i.test(API);
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API + path, {
