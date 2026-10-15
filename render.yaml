@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: forge-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -e .
+    startCommand: uvicorn harness.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: FORGE_ENV
+        value: production
+      - key: FORGE_SESSION_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: FORGE_FRONTEND_URL
+        sync: false
+      - key: FORGE_CORS_ORIGINS
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      - key: FORGE_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FORGE_MODEL
+        value: openai/gpt-oss-20b
+      - key: FORGE_WORKSPACE_ROOT
+        value: /opt/render/project/src/.forge/workspaces
