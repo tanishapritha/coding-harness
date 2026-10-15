@@ -64,7 +64,13 @@ def _current_user(forge_session: str | None):
 frontend_url = os.getenv("FORGE_FRONTEND_URL", "http://localhost:3000").rstrip("/")
 extra_origins = [o.strip().rstrip("/") for o in os.getenv("FORGE_CORS_ORIGINS", "").split(",") if o.strip()]
 allowed_origins = list(dict.fromkeys(["http://localhost:3000", "http://127.0.0.1:3000", frontend_url, *extra_origins]))
-app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=True, allow_methods=["GET", "POST", "DELETE", "OPTIONS"], allow_headers=["Content-Type"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 executor = ThreadPoolExecutor(max_workers=4)
 active: dict[str, AgentRuntime] = {}
