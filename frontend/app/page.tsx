@@ -12,6 +12,7 @@ type User = { id: number; login: string; name?: string | null; avatar_url?: stri
 type GitHubRepo = { id: number; full_name: string; html_url: string; default_branch: string; private: boolean };
 
 const API = (process.env.NEXT_PUBLIC_FORGE_API || "http://127.0.0.1:8000").replace(/\/$/, "");
+const CROSS_SITE_API = /^https:\/\//i.test(API);
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API + path, {
@@ -90,7 +91,7 @@ export default function Home() {
       });
       const state = await api<Run>("/runs/" + r.run_id);
       setSelected(state); setEvents([]); setDiff("");
-      const source = new EventSource(API + "/runs/" + r.run_id + "/stream");
+      const source = new EventSource(API + "/runs/" + r.run_id + "/stream", { withCredentials: true });
       source.onmessage = m => {
         const e = JSON.parse(m.data) as Event;
         setEvents(prev => [...prev,e]);
