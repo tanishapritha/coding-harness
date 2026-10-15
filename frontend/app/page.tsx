@@ -11,7 +11,7 @@ type Event = { type: string; timestamp: string; data: Record<string, unknown> };
 type User = { id: number; login: string; name?: string | null; avatar_url?: string | null };
 type GitHubRepo = { id: number; full_name: string; html_url: string; default_branch: string; private: boolean };
 
-const API = (process.env.NEXT_PUBLIC_FORGE_API || "http://127.0.0.1:8000").replace(/\\/$/, "");
+const API = (process.env.NEXT_PUBLIC_FORGE_API || "http://127.0.0.1:8000").replace(/\/$/, "");
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API + path, {
