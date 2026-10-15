@@ -2,22 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
+import os
+import secrets
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, FastAPI, HTTPException, Response
-from fastapi.responses import RedirectResponse
+from fastapi import Cookie, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import BaseModel, Field
 
-from .cloud.db import delete_workspace as delete_cloud_workspace_record, get_user_by_id, get_workspace as get_cloud_workspace_record, init_db, installations_for_user, save_installation, save_workspace, upsert_user
-from .cloud.github import create_pull_request, exchange_code, installation_for_repo, installation_token, oauth_url, repositories as github_repositories, user as github_user
-
+from .cloud.db import (
+    delete_workspace as delete_cloud_workspace_record, get_user_by_id,
+    get_workspace as get_cloud_workspace_record, init_db, installations_for_user,
+    save_installation, save_workspace, upsert_user,
+)
+from .cloud.github import (
+    create_pull_request, exchange_code, installation_for_repo, installation_token,
+    oauth_url, repositories as github_repositories, user as github_user,
+)
 from .agent import AgentRuntime
 from .config import Settings
 from .memory.sqlite import SQLiteMemory
@@ -29,7 +36,6 @@ from .cloud.workspaces import DockerWorkspaceManager
 app = FastAPI(title="Forge API", version="1.1.0")
 
 def _session_serializer() -> URLSafeSerializer:
-    import os
     secret = os.getenv("FORGE_SESSION_SECRET")
     if not secret:
         raise RuntimeError("FORGE_SESSION_SECRET is required for cloud auth")
@@ -37,35 +43,34 @@ def _session_serializer() -> URLSafeSerializer:
 
 @app.on_event("startup")
 def _startup() -> None:
-    import os
-    if os.getenv("DATABASE_URL"):
-        init_db()
+    if not os.getenv("DATABASE_URL"):
+        raise RuntimeError("DATABASE_URL is required for the hosted Forge API")
+    init_db()
 
 def _current_user(forge_session: str | None):
     if not forge_session:
         raise HTTPException(401, "Not authenticated")
     try:
         payload = _session_serializer().loads(forge_session)
-    except BadSignature as exc:
+    except (BadSignature, TypeError, ValueError) as exc:
         raise HTTPException(401, "Invalid session") from exc
+    if not isinstance(payload, dict) or "user_id" not in payload:
+        raise HTTPException(401, "Invalid session")
     user = get_user_by_id(int(payload["user_id"]))
     if user is None:
         raise HTTPException(401, "User not found")
     return user
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+frontend_url = os.getenv("FORGE_FRONTEND_URL", "http://localhost:3000").rstrip("/")
+extra_origins = [o.strip().rstrip("/") for o in os.getenv("FORGE_CORS_ORIGINS", "").split(",") if o.strip()]
+allowed_origins = list(dict.fromkeys(["http://localhost:3000", "http://127.0.0.1:3000", frontend_url, *extra_origins]))
+app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=True, allow_methods=["GET", "POST", "DELETE", "OPTIONS"], allow_headers=["Content-Type"])
 
 executor = ThreadPoolExecutor(max_workers=4)
 active: dict[str, AgentRuntime] = {}
 lock = threading.Lock()
 store = TrajectoryStore()
 cloud_workspaces = DockerWorkspaceManager()
-
 
 class RunRequest(BaseModel):
     workspace: str
@@ -74,17 +79,14 @@ class RunRequest(BaseModel):
     max_iterations: int = Field(default=20, ge=1, le=100)
     command_timeout: int = Field(default=30, ge=5, le=300)
 
-
 def _state_path(run_id: str) -> Path:
     return store.path(run_id) / "state.json"
-
 
 def _load_state(run_id: str) -> dict[str, Any]:
     path = _state_path(run_id)
     if not path.exists():
         raise HTTPException(404, "Run not found")
     return json.loads(path.read_text(encoding="utf-8"))
-
 
 def _run(runtime: AgentRuntime, task: str) -> None:
     try:
@@ -93,29 +95,27 @@ def _run(runtime: AgentRuntime, task: str) -> None:
         with lock:
             active.pop(runtime.run_id, None)
 
-
-
 @app.get("/auth/github/login")
 def github_login() -> dict[str, str]:
-    import secrets
-    state = _session_serializer().dumps({"oauth_state": secrets.token_urlsafe(24)})
+    # Signed nonce. For public production use, bind this to a browser-held nonce too.
+    state = _session_serializer().dumps({"oauth_state": secrets.token_urlsafe(32)})
     return {"url": oauth_url(state), "state": state}
 
 @app.get("/auth/github/callback")
-async def github_callback(code: str, state: str, response: Response):
+async def github_callback(code: str, state: str):
     try:
-        _session_serializer().loads(state)
-    except BadSignature as exc:
+        payload = _session_serializer().loads(state)
+    except (BadSignature, TypeError, ValueError) as exc:
         raise HTTPException(400, "Invalid OAuth state") from exc
+    if not isinstance(payload, dict) or not payload.get("oauth_state"):
+        raise HTTPException(400, "Invalid OAuth state")
     token = await exchange_code(code)
     profile = await github_user(token)
     user = upsert_user(profile)
     session = _session_serializer().dumps({"user_id": user.id})
-    response.set_cookie("forge_session", session, httponly=True, secure=False, samesite="lax", max_age=60 * 60 * 24 * 30)
-    import os
-    frontend = os.getenv("FORGE_FRONTEND_URL", "http://localhost:3000")
-    redirect = RedirectResponse(url=frontend, status_code=302)
-    redirect.set_cookie("forge_session", session, httponly=True, secure=False, samesite="lax", max_age=60 * 60 * 24 * 30)
+    production = os.getenv("FORGE_ENV", "production").lower() == "production"
+    redirect = RedirectResponse(url=frontend_url, status_code=302)
+    redirect.set_cookie("forge_session", session, httponly=True, secure=production, samesite="none" if production else "lax", max_age=60 * 60 * 24 * 30, path="/")
     return redirect
 
 @app.get("/auth/me")
@@ -126,7 +126,6 @@ def auth_me(forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
 @app.get("/github/install")
 def github_install(forge_session: str | None = Cookie(default=None)) -> dict[str, str]:
     _current_user(forge_session)
-    import os
     slug = os.getenv("GITHUB_APP_SLUG")
     if not slug:
         raise HTTPException(500, "GITHUB_APP_SLUG is required")
@@ -147,7 +146,6 @@ async def github_repos(forge_session: str | None = Cookie(default=None)) -> list
         token = await installation_token(item.installation_id)
         repos.extend(await github_repositories(token))
     return repos
-
 
 @app.post("/cloud/workspaces")
 async def create_cloud_workspace(request: WorkspaceCreate, forge_session: str | None = Cookie(default=None)) -> dict[str, Any]:
@@ -200,8 +198,7 @@ def create_cloud_run(request: CloudRunRequest, forge_session: str | None = Cooki
     if record is None:
         raise HTTPException(404, "Workspace not found")
     base = Settings()
-    settings = Settings(model=request.model or base.model, api_key=base.api_key, base_url=base.base_url,
-                        max_iterations=request.max_iterations, command_timeout=base.command_timeout)
+    settings = Settings(model=request.model or base.model, api_key=base.api_key, base_url=base.base_url, max_iterations=request.max_iterations, command_timeout=base.command_timeout)
     runtime = AgentRuntime(record.path, settings, sandbox=True)
     with lock:
         active[runtime.run_id] = runtime
@@ -228,33 +225,21 @@ async def publish_cloud_run(request: CloudPublishRequest, forge_session: str | N
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "forge"}
 
-
 @app.post("/runs", status_code=202)
 def create_run(request: RunRequest) -> dict[str, Any]:
     ws = Workspace(request.workspace)
     base = Settings()
-    settings = Settings(
-        model=request.model or base.model,
-        api_key=base.api_key,
-        base_url=base.base_url,
-        max_iterations=request.max_iterations,
-        command_timeout=request.command_timeout,
-    )
+    settings = Settings(model=request.model or base.model, api_key=base.api_key, base_url=base.base_url, max_iterations=request.max_iterations, command_timeout=request.command_timeout)
     runtime = AgentRuntime(str(ws.root), settings)
     with lock:
         active[runtime.run_id] = runtime
     executor.submit(_run, runtime, request.task)
     return {"run_id": runtime.run_id, "status": "CREATED", "workspace": str(ws.root)}
 
-
 @app.get("/runs")
 def list_runs(limit: int = 30) -> list[dict[str, Any]]:
     runs = []
-    for path in sorted(
-        [p for p in store.base.iterdir() if p.is_dir()],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )[:limit]:
+    for path in sorted([p for p in store.base.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)[:max(1, min(limit, 100))]:
         state = path / "state.json"
         if state.exists():
             try:
@@ -263,11 +248,9 @@ def list_runs(limit: int = 30) -> list[dict[str, Any]]:
                 continue
     return runs
 
-
 @app.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
     return _load_state(run_id)
-
 
 @app.post("/runs/{run_id}/stop")
 def stop_run(run_id: str) -> dict[str, Any]:
@@ -278,7 +261,6 @@ def stop_run(run_id: str) -> dict[str, Any]:
         return {"run_id": run_id, "status": state["status"]}
     runtime.request_stop()
     return {"run_id": run_id, "status": "STOP_REQUESTED"}
-
 
 @app.get("/runs/{run_id}/events")
 def get_events(run_id: str) -> list[dict[str, Any]]:
@@ -294,20 +276,18 @@ def get_events(run_id: str) -> list[dict[str, Any]]:
             pass
     return events
 
-
 @app.get("/runs/{run_id}/stream")
 async def stream_events(run_id: str):
     path = store.path(run_id) / "events.jsonl"
     if not path.exists() and not _state_path(run_id).exists():
         raise HTTPException(404, "Run not found")
-
     async def generator():
         position = 0
         while True:
             if path.exists():
-                text = path.read_text(encoding="utf-8")
-                chunk = text[position:]
-                position = len(text)
+                content = path.read_text(encoding="utf-8")
+                chunk = content[position:]
+                position = len(content)
                 for line in chunk.splitlines():
                     if line:
                         yield f"data: {line}\\n\\n"
@@ -316,23 +296,13 @@ async def stream_events(run_id: str):
                 yield "event: done\\ndata: {}\\n\\n"
                 break
             await asyncio.sleep(0.5)
-
-    return StreamingResponse(generator(), media_type="text/event-stream")
-
+    return StreamingResponse(generator(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.get("/repositories")
 def repository_info(path: str) -> dict[str, Any]:
     ws = Workspace(path)
     files = ws.list_files()
-    return {
-        "path": str(ws.root),
-        "name": ws.root.name,
-        "is_git_repo": ws.is_git_repo,
-        "branch": ws.git("branch", "--show-current") if ws.is_git_repo else None,
-        "status": ws.git("status", "--short") if ws.is_git_repo else "",
-        "files": files,
-    }
-
+    return {"path": str(ws.root), "name": ws.root.name, "is_git_repo": ws.is_git_repo, "branch": ws.git("branch", "--show-current") if ws.is_git_repo else None, "status": ws.git("status", "--short") if ws.is_git_repo else "", "files": files}
 
 @app.get("/repositories/memory")
 def repository_memory(path: str, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
@@ -340,13 +310,11 @@ def repository_memory(path: str, query: str = "", limit: int = 50) -> list[dict[
     memory = SQLiteMemory("~/.forge/forge.db", str(ws.root).lower())
     return memory.search(query, limit) if query else memory.all()[:limit]
 
-
 @app.get("/runs/{run_id}/diff")
 def run_diff(run_id: str) -> dict[str, Any]:
     state = _load_state(run_id)
     ws = Workspace(state["workspace"])
     return {"diff": ws.git("diff", "--", ".") if ws.is_git_repo else ""}
-
 
 @app.get("/runs/{run_id}/context")
 def run_context(run_id: str) -> dict[str, Any]:
